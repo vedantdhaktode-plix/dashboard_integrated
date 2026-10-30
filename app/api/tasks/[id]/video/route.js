@@ -2,10 +2,15 @@ import { NextResponse } from "next/server";
 import { SubmitVideoSchema } from "@/lib/workflow/contracts";
 import { transitionTask } from "@/lib/workflow/engine";
 import { mutateState } from "@/lib/store/unified-store";
+import { getServerSession } from "@/lib/auth/session";
 
 export async function POST(request, context) {
   try {
     const { id } = await context.params;
+    const sessionUser = await getServerSession();
+    if (!sessionUser || !["edit", "video", "administrator"].includes(sessionUser.role)) {
+      return NextResponse.json({ error: "You do not have permission to submit video versions" }, { status: 403 });
+    }
     const body = await request.json();
     const parsed = SubmitVideoSchema.safeParse({ ...body, taskId: id });
 
@@ -24,8 +29,8 @@ export async function POST(request, context) {
       let updated = transitionTask(
         current,
         "approval_pending",
-        "Video Editor",
-        `Submitted version ${parsed.data.version} (${parsed.data.aspectRatio}) for Brand review.`
+        sessionUser.name,
+        `Submitted version ${parsed.data.version} (${parsed.data.aspectRatio}) for Brand approval.`
       );
 
       updated.videoLink = parsed.data.videoUrl;
@@ -49,14 +54,14 @@ export async function POST(request, context) {
         id: `appr-vid-${Date.now()}`,
         type: "video",
         status: "pending",
-        requestedBy: "Video Editor",
+        requestedBy: sessionUser.name,
         comment: parsed.data.comment,
         requestedAt: new Date().toISOString(),
       });
 
       tasks[index] = updated;
       return updated;
-    }, "Video Editor");
+    }, sessionUser.name);
 
     return NextResponse.json({ task: result });
   } catch (error) {

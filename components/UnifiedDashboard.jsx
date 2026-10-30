@@ -24,7 +24,7 @@ const STATE = {
   editing_queue: { label: "Video queue", tone: "teal" },
   editing_in_progress: { label: "Video production", tone: "blue" },
   changes_requested: { label: "Video changes", tone: "rose" },
-  approval_pending: { label: "Brand video review", tone: "amber" },
+  approval_pending: { label: "Brand approval pending", tone: "amber" },
   approved: { label: "Approved", tone: "green" },
   ready_for_performance: { label: "Ready for live", tone: "teal" },
   publishing_in_progress: { label: "Setup in progress", tone: "blue" },
@@ -52,13 +52,13 @@ const ROLE_COLUMNS = {
     ["editing_queue", "Video queue"],
     ["editing_in_progress", "Video production"],
     ["changes_requested", "Video rework"],
-    ["approval_pending", "Brand review"],
+    ["approval_pending", "Brand approval pending"],
   ],
   video: [
     ["editing_queue", "Video queue"],
     ["editing_in_progress", "Video production"],
     ["changes_requested", "Video rework"],
-    ["approval_pending", "Brand review"],
+    ["approval_pending", "Brand approval pending"],
   ],
   performance: [
     ["ready_for_performance", "Ready for live"],
@@ -158,6 +158,134 @@ function OwnerSelect({ task, writers, onChange, compact = false }) {
       <option value="">Unassigned</option>
       {writers.map((writer) => <option value={writer.id} key={writer.id}>{writer.name}</option>)}
     </select>
+  );
+}
+
+function EditorSelect({ task, editors, onChange, compact = false }) {
+  return (
+    <select
+      className={`owner-select ${compact ? "compact" : ""}`}
+      value={task.editorId || ""}
+      onClick={(event) => event.stopPropagation()}
+      onChange={(event) => onChange(task.id, event.target.value)}
+      aria-label={`Assign editor for ${task.title}`}
+    >
+      <option value="">Unassigned</option>
+      {editors.map((editor) => <option value={editor.id} key={editor.id}>{editor.name}</option>)}
+    </select>
+  );
+}
+
+function VideoManagerConsole({
+  tasks, editors, teamMembers, onOpen, onAssign, brief, onBriefChange,
+  priority, onPriorityChange, status, onStatusChange, search,
+}) {
+  const [managerView, setManagerView] = useState("queue");
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const isOverdue = (task) => {
+    if (!task.targetDate || ["approved", "published", "cancelled"].includes(task.state)) return false;
+    const due = new Date(`${task.targetDate}T00:00:00`);
+    return Number.isFinite(due.getTime()) && due < today;
+  };
+
+  const queueTasks = tasks.filter((task) => {
+    const haystack = [task.id, task.title, task.hookName, task.product, task.category, task.contentType].join(" ").toLowerCase();
+    return briefType(task) === brief &&
+      (priority === "all" || task.priority === priority) &&
+      (status === "all" || task.state === status) &&
+      (!search || haystack.includes(search.toLowerCase()));
+  });
+
+  const counts = {
+    unassigned: queueTasks.filter((task) => !task.editorId).length,
+    production: queueTasks.filter((task) => task.state === "editing_in_progress").length,
+    rework: queueTasks.filter((task) => task.state === "changes_requested").length,
+    review: queueTasks.filter((task) => task.state === "approval_pending").length,
+    overdue: queueTasks.filter(isOverdue).length,
+  };
+
+  const roster = teamMembers.map((editor) => {
+    const assigned = tasks.filter((task) => task.editorId === editor.id);
+    return {
+      editor,
+      total: assigned.length,
+      queued: assigned.filter((task) => task.state === "editing_queue").length,
+      editing: assigned.filter((task) => task.state === "editing_in_progress").length,
+      rework: assigned.filter((task) => task.state === "changes_requested").length,
+      review: assigned.filter((task) => task.state === "approval_pending").length,
+      overdue: assigned.filter(isOverdue).length,
+    };
+  }).filter((row) => row.total > 0)
+    .sort((a, b) => b.total - a.total || a.editor.name.localeCompare(b.editor.name));
+
+  const unassigned = tasks.filter((task) => !task.editorId);
+  const workloadRows = [{
+    editor: { id: "unassigned", name: "Unassigned", initials: "—", tone: "slate" },
+    total: unassigned.length,
+    queued: unassigned.filter((task) => task.state === "editing_queue").length,
+    editing: unassigned.filter((task) => task.state === "editing_in_progress").length,
+    rework: unassigned.filter((task) => task.state === "changes_requested").length,
+    review: unassigned.filter((task) => task.state === "approval_pending").length,
+    overdue: unassigned.filter(isOverdue).length,
+  }, ...roster];
+
+  return (
+    <section className="video-manager-console">
+      <header className="video-manager-head">
+        <div><span className="eyebrow">Editing operations</span><h2>Video production control room</h2><p>Assign approved briefs, balance editor workload, and track every cut through Brand review.</p></div>
+        <div className="manager-view-toggle" aria-label="Editing manager view">
+          <button className={managerView === "queue" ? "active" : ""} onClick={() => setManagerView("queue")}><LayoutDashboard size={16} /> Work queue</button>
+          <button className={managerView === "workload" ? "active" : ""} onClick={() => setManagerView("workload")}><List size={16} /> Team workload</button>
+        </div>
+      </header>
+
+      <div className="video-manager-metrics">
+        <article className={counts.unassigned ? "attention" : ""}><span>Needs assignment</span><strong>{counts.unassigned}</strong><small>Briefs without an editor</small></article>
+        <article><span>In production</span><strong>{counts.production}</strong><small>Active edits underway</small></article>
+        <article className={counts.rework ? "attention" : ""}><span>Returned for changes</span><strong>{counts.rework}</strong><small>Cuts needing a new version</small></article>
+        <article><span>With Brand</span><strong>{counts.review}</strong><small>Submitted for review</small></article>
+        <article className={counts.overdue ? "danger" : ""}><span>Overdue</span><strong>{counts.overdue}</strong><small>Past the target date</small></article>
+      </div>
+
+      <section className="manager-toolbar panel">
+        <div className="queue-tabs"><button className={brief === "video" ? "active" : ""} onClick={() => onBriefChange("video")}>Video brief queue</button><button className={brief === "ai" ? "active" : ""} onClick={() => onBriefChange("ai")}>AI brief queue</button></div>
+        <div className="filter"><select value={priority} onChange={(event) => onPriorityChange(event.target.value)} aria-label="Filter by priority"><option value="all">All priorities</option>{["P0", "P1", "P2", "R0"].map((value) => <option key={value}>{value}</option>)}</select></div>
+        <div className="filter"><select value={status} onChange={(event) => onStatusChange(event.target.value)} aria-label="Filter by workflow status"><option value="all">All statuses</option>{ROLE_COLUMNS.edit.map(([value, label]) => <option value={value} key={value}>{label}</option>)}<option value="blocked">Blocked</option></select></div>
+        <span className="result-count">{queueTasks.length} matching briefs</span>
+      </section>
+
+      {managerView === "workload" ? (
+        <section className="manager-workload panel">
+          <header><div><h3>Editor workload</h3><p>Assignment load from the current Plix workflow records.</p></div><span>{tasks.length} active video records</span></header>
+          <div className="manager-table-scroll"><table>
+            <thead><tr><th>Editor</th><th>Total</th><th>Queued</th><th>Editing</th><th>Rework</th><th>Brand review</th><th>Overdue</th></tr></thead>
+            <tbody>{workloadRows.map((row) => <tr key={row.editor.id}><td><span className="workload-editor"><Avatar person={row.editor} small /><strong>{row.editor.name}</strong></span></td><td><b>{row.total}</b></td><td>{row.queued}</td><td>{row.editing}</td><td>{row.rework}</td><td>{row.review}</td><td><span className={row.overdue ? "overdue-count" : ""}>{row.overdue}</span></td></tr>)}</tbody>
+          </table></div>
+        </section>
+      ) : (
+        <section className="manager-queue panel">
+          <div className="manager-table-scroll"><table>
+            <thead><tr><th>Brief</th><th>Type</th><th>Approved assets</th><th>Assigned editor</th><th>Target</th><th>Progress</th><th>Status</th></tr></thead>
+            <tbody>{queueTasks.map((task) => {
+              const due = task.targetDate ? new Date(`${task.targetDate}T00:00:00`) : null;
+              const assetLink = task.scriptLink || task.referenceUrl;
+              const taskProgress = Math.max(0, Math.min(100, Number(task.progress) || 0));
+              return <tr key={task.id} onClick={() => onOpen(task)}>
+                <td className="manager-brief-cell"><strong>{task.title || task.hookName || "Untitled brief"}</strong><span>{task.id} · {task.product} · {task.category}</span></td>
+                <td><span className={`manager-brief-type ${briefType(task)}`}>{briefType(task) === "ai" ? "AI brief" : "Video brief"}</span><small>{sourceSheet(task)}</small></td>
+                <td>{assetLink ? <a href={assetLink} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}><FileText size={14} /> Open script <ExternalLink size={12} /></a> : <span className="asset-missing">No link</span>}</td>
+                <td><EditorSelect task={task} editors={editors} onChange={onAssign} compact /></td>
+                <td><time className={isOverdue(task) ? "date-overdue" : ""}>{due && Number.isFinite(due.getTime()) ? due.toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : "Not set"}</time></td>
+                <td><div className="manager-progress"><i><b style={{ width: `${taskProgress}%` }} /></i><span>{taskProgress}%</span></div></td>
+                <td><Status state={task.state} /></td>
+              </tr>;
+            })}</tbody>
+          </table>{!queueTasks.length && <div className="manager-empty"><Check size={19} /><strong>No matching video work</strong><span>Try another brief type or filter.</span></div>}</div>
+        </section>
+      )}
+    </section>
   );
 }
 
@@ -651,10 +779,12 @@ function ScriptHandoffSection({ task, role, onSubmitScript, onSubmitVideo, onGoL
   );
 }
 
-function Drawer({ task, role, users, writers, onClose, onAssign, onSubmitScript, onSubmitVideo, onGoLive, onBrandDecision, onReleaseDraftBrief }) {
+function Drawer({ task, role, users, writers, editors, canAssignEditor, onClose, onAssign, onAssignEditor, onSubmitScript, onSubmitVideo, onGoLive, onBrandDecision, onReleaseDraftBrief }) {
   const [tab, setTab] = useState("overview");
   if (!task) return null;
   const writer = users.find((person) => person.id === (task.scriptOwnerId || task.contentOwnerId));
+  const editor = users.find((person) => person.id === task.editorId);
+  const isVideoTask = ["editing_queue", "editing_in_progress", "changes_requested", "approval_pending"].includes(task.state);
   const metrics = computePipelineMetrics(task);
 
   return (
@@ -711,12 +841,16 @@ function Drawer({ task, role, users, writers, onClose, onAssign, onSubmitScript,
                 </div>
                 <div className="detail-grid">
                   <div>
-                    <label>Assigned Owner</label>
-                    <OwnerSelect task={task} writers={writers} onChange={onAssign} />
+                    <label>{isVideoTask ? "Assigned Editor" : "Assigned Owner"}</label>
+                    {isVideoTask
+                      ? (canAssignEditor
+                        ? <EditorSelect task={task} editors={editors} onChange={onAssignEditor} />
+                        : <span className="inline-owner"><Avatar person={editor} small />{editor?.name || "Unassigned"}</span>)
+                      : <OwnerSelect task={task} writers={writers} onChange={onAssign} />}
                   </div>
                   <div>
                     <label>Current Owner</label>
-                    <span className="inline-owner"><Avatar person={writer} small />{writer?.name || "Unassigned"}</span>
+                    <span className="inline-owner"><Avatar person={isVideoTask ? editor : writer} small />{(isVideoTask ? editor : writer)?.name || "Unassigned"}</span>
                   </div>
                   <div>
                     <label>Priority</label>
@@ -1080,6 +1214,11 @@ export default function UnifiedDashboard({ initialTasks = [], initialUsers = [],
   const currentUser = users.find((p) => p.id === currentUserId) || sessionUser || users[0];
   const currentRole = currentUser?.role || "brand";
   const normalizedTeam = normalizeRole(currentRole);
+  const isEditingManager = ["edit", "video"].includes(currentRole) && Boolean(currentUser?.isTeamLead);
+  const editors = users.filter((person) =>
+    ["edit", "video"].includes(person.role) && !person.isTeamLead
+  );
+  const editingTeam = users.filter((person) => ["edit", "video"].includes(person.role));
 
   const handleSignOut = async () => {
     try {
@@ -1241,8 +1380,14 @@ export default function UnifiedDashboard({ initialTasks = [], initialUsers = [],
       });
     }
 
+    if (["edit", "video"].includes(currentRole)) {
+      return currentUser?.isTeamLead
+        ? teamTasks
+        : teamTasks.filter((task) => task.editorId === currentUserId);
+    }
+
     return teamTasks;
-  }, [tasks, normalizedTeam, currentRole, currentUserId]);
+  }, [tasks, normalizedTeam, currentRole, currentUserId, currentUser?.isTeamLead]);
 
   // Toolbar Filter
   const filtered = useMemo(() => {
@@ -1284,6 +1429,22 @@ export default function UnifiedDashboard({ initialTasks = [], initialUsers = [],
         )
       );
       showToast("Owner assignment updated");
+    }
+  };
+
+  const assignEditor = async (taskId, editorId) => {
+    try {
+      const res = await fetch(`/api/tasks/${taskId}/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ editorId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Editor assignment failed");
+      setTasks((items) => items.map((task) => (task.id === taskId ? data.task : task)));
+      showToast(editorId ? "Editor assigned — all manager dashboards updated" : "Returned to unassigned queue");
+    } catch (error) {
+      showToast(error.message || "Failed to assign editor");
     }
   };
 
@@ -1402,7 +1563,7 @@ export default function UnifiedDashboard({ initialTasks = [], initialUsers = [],
         targetTeam: "brand",
         eventType: NOTIFICATION_EVENTS.VIDEO_SUBMITTED,
         title: "Video Cut Awaiting Review",
-        message: `Video cut for "${task.title}" (${task.id}) submitted by ${currentUser?.name}. Brand review required.`,
+        message: `Video cut for "${task.title}" (${task.id}) submitted by ${currentUser?.name}. Brand approval pending.`,
         task: updated,
         recipientUser: brandApprover,
       });
@@ -1456,14 +1617,14 @@ export default function UnifiedDashboard({ initialTasks = [], initialUsers = [],
       const current = tasks.find((t) => t.id === taskId) || updated;
       if (decision === "approved") {
         if (type === "script") {
-          const editor = users.find((u) => u.id === updated.editorId) || users.find((u) => u.role === "video" || u.role === "edit");
+          const editingManager = users.find((u) => u.isTeamLead && (u.role === "video" || u.role === "edit")) || currentUser;
           dispatchWorkflowHandoffNotification({
             targetTeam: "video",
             eventType: NOTIFICATION_EVENTS.SCRIPT_APPROVED,
-            title: "Script Approved — Video Production",
-            message: `Script approved for "${current.title}" (${current.id}) by ${currentUser?.name}. Video cutting can begin.`,
+            title: "Script Approved — Assignment Needed",
+            message: `Script approved for "${current.title}" (${current.id}) by ${currentUser?.name}. An editing manager must assign an editor.`,
             task: updated,
-            recipientUser: editor,
+            recipientUser: editingManager,
           });
         } else {
           const perfMarketer = users.find((u) => u.role === "performance");
@@ -1784,7 +1945,7 @@ export default function UnifiedDashboard({ initialTasks = [], initialUsers = [],
           </div>
 
           {/* Toolbar */}
-          <section className="toolbar panel">
+          {!isEditingManager && <section className="toolbar panel">
             <div className="queue-tabs">
               <button className={brief === "video" ? "active" : ""} onClick={() => setBrief("video")}>Video brief queue</button>
               <button className={brief === "ai" ? "active" : ""} onClick={() => setBrief("ai")}>AI brief queue</button>
@@ -1806,16 +1967,31 @@ export default function UnifiedDashboard({ initialTasks = [], initialUsers = [],
 
             <span className="result-count">{filtered.length} {brief === "ai" ? "AI" : "video"} tasks</span>
 
-            {!isBrandTeam && (
+            {!isBrandTeam && !isEditingManager && (
               <div className="view-toggle">
                 <button className={view === "list" ? "active" : ""} onClick={() => setView("list")}><List size={18} />List</button>
                 <button className={view === "board" ? "active" : ""} onClick={() => setView("board")}><LayoutDashboard size={18} />Board</button>
               </div>
             )}
-          </section>
+          </section>}
 
           {/* Brand Team: Folder Explorer / Other Teams (Video, Content, Perf, Admin): Kanban Board or List */}
-          {isBrandTeam ? (
+          {isEditingManager ? (
+            <VideoManagerConsole
+              tasks={roleTasks}
+              editors={editors}
+              teamMembers={editingTeam}
+              onOpen={(task) => setSelectedId(task.id)}
+              onAssign={assignEditor}
+              brief={brief}
+              onBriefChange={setBrief}
+              priority={priority}
+              onPriorityChange={setPriority}
+              status={status}
+              onStatusChange={setStatus}
+              search={search}
+            />
+          ) : isBrandTeam ? (
             <BrandFolderView
               tasks={filtered}
               onOpen={(t) => setSelectedId(t.id)}
@@ -1850,8 +2026,11 @@ export default function UnifiedDashboard({ initialTasks = [], initialUsers = [],
         role={currentRole}
         users={users}
         writers={writers}
+        editors={editors}
+        canAssignEditor={isEditingManager || currentRole === "administrator"}
         onClose={() => setSelectedId(null)}
         onAssign={assignWriter}
+        onAssignEditor={assignEditor}
         onSubmitScript={handleSubmitScript}
         onSubmitVideo={handleSubmitVideo}
         onGoLive={handleGoLive}

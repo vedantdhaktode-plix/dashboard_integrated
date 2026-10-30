@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME } from "./lib/auth/session";
 
-export function middleware(request) {
+export function proxy(request) {
   const { pathname } = request.nextUrl;
   const sessionToken = request.cookies.get(SESSION_COOKIE_NAME)?.value;
 
@@ -16,13 +16,11 @@ export function middleware(request) {
     return NextResponse.next();
   }
 
-  // Not logged in -> Redirect to /login
   if (!sessionToken && !isAuthRoute) {
     const loginUrl = new URL("/login", request.url);
     return NextResponse.redirect(loginUrl);
   }
 
-  // Already logged in -> Visiting /login redirects to dashboard
   if (sessionToken && isAuthRoute) {
     const dashboardUrl = new URL("/", request.url);
     return NextResponse.redirect(dashboardUrl);
@@ -34,4 +32,3 @@ export function middleware(request) {
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };
-

@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
-import { FALLBACK_VIDEO_EDITOR } from "@/lib/workflow/constants";
 import { transitionTask } from "@/lib/workflow/engine";
 import { mutateState } from "@/lib/store/unified-store";
+import { getServerSession } from "@/lib/auth/session";
 
 export async function POST(request, context) {
   try {
     const { id: taskId } = await context.params;
     const body = await request.json();
     const { decision, type = "script", comment = "" } = body;
+    const sessionUser = await getServerSession();
+    const actorName = sessionUser?.name || "Brand Approver";
 
     if (!["approved", "changes_requested"].includes(decision)) {
       return NextResponse.json({ error: "Decision must be approved or changes_requested" }, { status: 400 });
@@ -38,13 +40,16 @@ export async function POST(request, context) {
       let updated = transitionTask(
         current,
         nextState,
-        "Brand Approver",
+        actorName,
         `Brand decision on ${type}: ${decision}. ${comment}`.trim()
       );
 
-      // Auto-assign fallback editor if unassigned when entering video queue
-      if (nextState === "editing_queue" && !updated.editorId) {
-        updated.editorId = FALLBACK_VIDEO_EDITOR.id;
+      // Brand-approved scripts enter the shared manager dispatch queue unassigned.
+      if (nextState === "editing_queue") {
+        updated.editorId = null;
+        updated.editorAssignedById = null;
+        updated.editorAssignedByName = null;
+        updated.editorAssignedAt = null;
       }
 
       // Update approval record status
@@ -53,7 +58,8 @@ export async function POST(request, context) {
           return {
             ...appr,
             status: decision,
-            decidedBy: "Brand Approver",
+            decidedBy: actorName,
+            decidedById: sessionUser?.id || null,
             decisionComment: comment,
             decidedAt: new Date().toISOString(),
           };
@@ -63,7 +69,7 @@ export async function POST(request, context) {
 
       tasks[index] = updated;
       return updated;
-    }, "Brand Approver");
+    }, actorName);
 
     return NextResponse.json({ task: result });
   } catch (error) {
